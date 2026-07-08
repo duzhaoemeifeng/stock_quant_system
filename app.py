@@ -409,10 +409,10 @@ st.sidebar.markdown(RISK_DISCLAIMER)
 
 
 # ============================================================
-# 主页面 — 两个标签页
+# 主页面 — 四个标签页
 # ============================================================
 
-tab1, tab2, tab3 = st.tabs(["📊 手动回测", "🤖 AI Agent 智能分析", "💬 对话 Agent"])
+tab1, tab2, tab3, tab4 = st.tabs(["📊 手动回测", "🤖 AI Agent 智能分析", "💬 对话 Agent", "🔮 AI 预测"])
 
 # ============================================================
 # Tab 1: 手动回测
@@ -813,7 +813,7 @@ with tab3:
 
     if st.session_state.chat_agent is not None:
         st.markdown("**快捷提问**:")
-        qs = ["分析一下这只股票", "现在市场怎么样", "推荐什么策略", "怎么控制风险"]
+        qs = ["分析一下这只股票", "明天会涨吗", "现在市场怎么样", "推荐什么策略", "怎么控制风险"]
         for i, q in enumerate(qs):
             if st.button(q, key=f"qq_{i}"):
                 st.session_state.chat_history.append({"role": "user", "content": q})
@@ -822,6 +822,217 @@ with tab3:
                 st.rerun()
     else:
         st.info("👆 先点击「📥 加载数据」加载股票数据，然后就可以自由对话！")
+
+# ============================================================
+# Tab 4: AI 预测
+# ============================================================
+with tab4:
+    st.markdown("## 🔮 AI 价格预测")
+    st.markdown("使用机器学习模型（RandomForest / GradientBoosting / LogisticRegression）预测次日涨跌方向。")
+
+    # 模型选择
+    model_col1, model_col2, model_col3 = st.columns([2, 1, 1])
+    with model_col1:
+        pred_symbol = st.text_input("股票代码", value="000001", key="pred_symbol_input")
+    with model_col2:
+        model_choice = st.selectbox(
+            "模型",
+            ["RandomForest", "GradientBoosting", "LogisticRegression", "Ensemble"],
+            key="pred_model_select",
+        )
+    with model_col3:
+        train_btn = st.button("📊 训练模型", key="pred_train_btn", type="primary")
+
+    if train_btn:
+        with st.spinner("加载数据..."):
+            pred_data = load_data(pred_symbol, use_real_data=False)
+
+        if pred_data.empty:
+            st.error("数据加载失败，请检查股票代码")
+            st.stop()
+
+        st.success(f"数据加载完成：{len(pred_data)} 个交易日")
+
+        with st.spinner("计算特征 + 训练模型..."):
+            try:
+                from prediction import (
+                    PredictionEngine,
+                    RandomForestDirectionModel,
+                    GradientBoostingDirectionModel,
+                    LogisticDirectionModel,
+                    VotingEnsembleModel,
+                )
+
+                model_map = {
+                    "RandomForest": RandomForestDirectionModel(),
+                    "GradientBoosting": GradientBoostingDirectionModel(),
+                    "LogisticRegression": LogisticDirectionModel(),
+                    "Ensemble": VotingEnsembleModel(),
+                }
+                engine = PredictionEngine(model=model_map[model_choice])
+                metrics = engine.train(pred_data)
+                result = engine.predict(pred_data)
+                st.session_state.pred_result = result
+                st.session_state.pred_metrics = metrics
+                st.session_state.pred_data = pred_data
+                st.session_state.pred_trained = True
+
+            except Exception as e:
+                st.error(f"训练失败：{e}")
+                st.session_state.pred_trained = False
+                st.stop()
+
+        st.success(f"模型训练完成！验证集准确率: {metrics.get('accuracy', 0):.1%}")
+
+    # 显示预测结果
+    if st.session_state.get("pred_trained"):
+        result = st.session_state.get("pred_result")
+        metrics = st.session_state.get("pred_metrics")
+
+        if result:
+            # 预测方向
+            direction_emoji = "📈" if result.direction == 1 else "📉"
+            prob_pct = result.direction_probability * 100
+
+            st.markdown("---")
+            st.markdown("### 📊 预测结果")
+
+            r_col1, r_col2, r_col3, r_col4 = st.columns(4)
+            with r_col1:
+                st.metric("预测方向", f"{direction_emoji} {result.direction_label}")
+            with r_col2:
+                st.metric("上涨概率", f"{prob_pct:.1f}%")
+            with r_col3:
+                st.metric("置信度", f"{result.confidence:.2f}")
+            with r_col4:
+                st.metric("模型", result.model_name)
+
+            # 目标价位
+            if getattr(result, 'current_price', None) and getattr(result, 'predicted_price_1d', None):
+                price_col1, price_col2, price_col3 = st.columns(3)
+                with price_col1:
+                    st.metric("当前价格", f"{result.current_price:.2f} 元")
+                with price_col2:
+                    change_1d = result.predicted_return_1d
+                    delta_1d = f"{change_1d:+.2%}" if change_1d is not None else "N/A"
+                    st.metric("1日目标价", f"{result.predicted_price_1d:.2f} 元", delta=delta_1d)
+                with price_col3:
+                    change_5d = result.predicted_return_5d
+                    delta_5d = f"{change_5d:+.2%}" if change_5d is not None else "N/A"
+                    st.metric("5日参考价", f"{result.predicted_price_5d:.2f} 元", delta=delta_5d)
+
+            # 评估指标
+            if metrics:
+                st.markdown("### 📋 模型评估")
+                m_col1, m_col2, m_col3, m_col4, m_col5 = st.columns(5)
+                with m_col1:
+                    st.metric("准确率", f"{metrics.get('accuracy', 0):.1%}")
+                with m_col2:
+                    st.metric("精确率", f"{metrics.get('precision', 0):.1%}")
+                with m_col3:
+                    st.metric("召回率", f"{metrics.get('recall', 0):.1%}")
+                with m_col4:
+                    st.metric("F1", f"{metrics.get('f1', 0):.3f}")
+                with m_col5:
+                    st.metric("样本数", metrics.get("n_samples", 0))
+
+            # 特征重要性
+            if result.feature_importance:
+                st.markdown("### 📊 特征重要性")
+
+                import matplotlib.pyplot as plt
+
+                feats = list(result.feature_importance.keys())[:10]
+                imps = list(result.feature_importance.values())[:10]
+
+                fig, ax = plt.subplots(figsize=(10, 5))
+                colors = ["#2ecc71" if v > 0 else "#e74c3c" for v in imps]
+                bars = ax.barh(range(len(feats)), imps, color=colors)
+                ax.set_yticks(range(len(feats)))
+                ax.set_yticklabels(feats, fontsize=10)
+                ax.set_xlabel("重要性", fontsize=11)
+                ax.set_title("Top 10 特征重要性", fontsize=13, fontweight="bold")
+                ax.invert_yaxis()
+                for bar_obj, val in zip(bars, imps):
+                    ax.text(bar_obj.get_width() + 0.002, bar_obj.get_y() + bar_obj.get_height() / 2,
+                            f"{val:.3f}", va="center", fontsize=9)
+                st.pyplot(fig)
+
+            # 滚动准确率
+            if "pred_data" in st.session_state:
+                st.markdown("### 📈 历史预测表现（滚动准确率）")
+
+                from prediction import FeatureEngineer, PredictionEvaluator
+
+                fe = FeatureEngineer()
+                X_all = fe.compute_features(st.session_state.pred_data)
+                y_all = fe.compute_target(st.session_state.pred_data)
+
+                valid = y_all.notna()
+                X_valid = X_all.loc[valid]
+                y_valid = y_all.loc[valid]
+
+                if len(X_valid) > 20:
+                    # 按时间切分：后 20% 做预测
+                    split = int(len(X_valid) * 0.8)
+                    X_test = X_valid.iloc[split:]
+                    y_test = y_valid.iloc[split:]
+
+                    # 用已训练模型逐行预测
+                    from prediction import PredictionEngine, RandomForestDirectionModel, GradientBoostingDirectionModel, LogisticDirectionModel, VotingEnsembleModel
+
+                    model_map = {
+                        "RandomForest": RandomForestDirectionModel(),
+                        "GradientBoosting": GradientBoostingDirectionModel(),
+                        "LogisticRegression": LogisticDirectionModel(),
+                        "Ensemble": VotingEnsembleModel(),
+                    }
+                    eval_model = model_map.get(model_choice, RandomForestDirectionModel())
+                    eval_model.train(X_valid.iloc[:split], y_valid.iloc[:split])
+
+                    y_pred_labels = []
+                    for i in range(len(X_test)):
+                        pred = eval_model.predict(X_test.iloc[[i]])
+                        y_pred_labels.append(pred.direction_label == "上涨")
+
+                    y_pred_binary = [1 if lbl else 0 for lbl in y_pred_labels]
+                    rolling_acc = PredictionEvaluator.rolling_accuracy(
+                        pd.Series(y_test.values, index=y_test.index),
+                        pd.Series(y_pred_binary, index=y_test.index),
+                        window=20,
+                    )
+
+                    fig2, ax2 = plt.subplots(figsize=(10, 4))
+                    ax2.plot(rolling_acc.index, rolling_acc.values * 100, color="#3498db", linewidth=2)
+                    ax2.axhline(y=50, color="gray", linestyle="--", alpha=0.5, label="随机猜测 50%")
+                    ax2.axhline(y=60, color="orange", linestyle="--", alpha=0.5, label="及格线 60%")
+                    ax2.set_ylabel("准确率 (%)", fontsize=11)
+                    ax2.set_xlabel("日期", fontsize=11)
+                    ax2.set_title("滚动 20 日预测准确率", fontsize=13, fontweight="bold")
+                    ax2.legend(loc="upper right")
+                    ax2.set_ylim(0, 105)
+                    st.pyplot(fig2)
+
+                    # 最近预测记录
+                    st.markdown("### 📋 最近预测记录")
+                    recent = min(20, len(X_test))
+                    records = []
+                    for i in range(recent):
+                        idx = len(X_test) - recent + i
+                        actual = "上涨" if y_test.iloc[idx] == 1 else "下跌"
+                        pred_lbl = "上涨" if y_pred_binary[idx] else "下跌"
+                        correct = "✅" if actual == pred_lbl else "❌"
+                        records.append({
+                            "日期": y_test.index[idx].strftime("%Y-%m-%d") if hasattr(y_test.index[idx], "strftime") else str(y_test.index[idx]),
+                            "预测": pred_lbl,
+                            "实际": actual,
+                            "结果": correct,
+                        })
+                    st.dataframe(pd.DataFrame(records), use_container_width=True, hide_index=True)
+        else:
+            st.info("模型已训练但预测结果为空，请重试。")
+    else:
+        st.info("👆 输入股票代码，选择模型，点击「📊 训练模型」开始预测！")
 
 st.markdown("---")
 st.markdown(RISK_DISCLAIMER)

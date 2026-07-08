@@ -7,9 +7,10 @@
 
 功能:
     1. 自动市场状态诊断
-    2. 策略自动选择与推荐
-    3. 参数自动优化
-    4. 综合报告生成
+    2. AI 价格预测（ML 模型）
+    3. 策略自动选择与推荐
+    4. 参数自动优化
+    5. 综合报告生成
 
 使用方法:
     agent = QuantAgent()
@@ -28,7 +29,7 @@ from .report_generator import ReportGenerator
 class QuantAgent:
     """量化交易 Agent。
 
-    自动完成市场分析 → 策略推荐 → 参数优化 → 报告生成全流程。
+    自动完成 市场分析 -> AI预测 -> 策略推荐 -> 参数优化 -> 报告生成 全流程。
 
     使用方法:
         agent = QuantAgent()
@@ -40,6 +41,7 @@ class QuantAgent:
     def __init__(self):
         self.regime_detector = MarketRegimeDetector()
         self.optimizer = AutoOptimizer()
+        self.prediction_enabled = True
 
     def analyze(
         self,
@@ -57,6 +59,7 @@ class QuantAgent:
         Returns:
             dict 包含:
                 - market_regime: 市场状态
+                - prediction: AI 预测结果
                 - recommendation: 策略推荐
                 - optimization: 参数优化结果
                 - report: Markdown 报告
@@ -64,6 +67,9 @@ class QuantAgent:
         """
         # 步骤1: 市场状态诊断
         market_regime = self.regime_detector.detect(data)
+
+        # 步骤1.5: AI 价格预测
+        prediction = self._run_prediction(data, symbol) if self.prediction_enabled else None
 
         # 步骤2: 策略自动推荐
         recommendation = StrategySelector.recommend(market_regime)
@@ -97,11 +103,13 @@ class QuantAgent:
             strategy_reco=recommendation,
             backtest_result=backtest_result,
             opt_result=optimization,
+            prediction=prediction,
         )
 
         return {
             "symbol": symbol,
             "market_regime": market_regime,
+            "prediction": prediction,
             "recommendation": recommendation,
             "optimization": optimization,
             "backtest": backtest_result,
@@ -115,8 +123,39 @@ class QuantAgent:
         return {
             "market_regime": regime,
             "recommendation": reco,
-            "summary": f"{regime['regime_label']} → 推荐 {reco['primary']} ({reco['reason']})",
+            "summary": f"{regime['regime_label']} -> 推荐 {reco['primary']} ({reco['reason']})",
         }
+
+    def _run_prediction(self, data: pd.DataFrame, symbol: str = "") -> dict | None:
+        """运行 AI 预测引擎。懒加载训练，失败时静默返回 None。"""
+        try:
+            from prediction import PredictionEngine
+        except ImportError:
+            return None
+
+        if not hasattr(self, "_prediction_engine"):
+            self._prediction_engine = PredictionEngine()
+
+        try:
+            result = self._prediction_engine.predict(data)
+            result.symbol = symbol
+            return {
+                "direction": result.direction,
+                "direction_label": result.direction_label,
+                "probability": result.direction_probability,
+                "current_price": result.current_price,
+                "predicted_price_1d": result.predicted_price_1d,
+                "predicted_price_5d": result.predicted_price_5d,
+                "predicted_return_1d": result.predicted_return_1d,
+                "predicted_return_5d": result.predicted_return_5d,
+                "confidence": result.confidence,
+                "feature_importance": result.feature_importance,
+                "model_name": result.model_name,
+                "accuracy": result.evaluation_metrics.get("accuracy"),
+                "warning": result.warning,
+            }
+        except Exception:
+            return None
 
     def _generate_default_signals(
         self,

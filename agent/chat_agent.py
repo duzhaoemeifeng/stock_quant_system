@@ -2,14 +2,14 @@
 ==================================================
  风险提示：本文件为量化交易学习工具的一部分，
  不构成任何投资建议。对话回复均为程序自动生成，
- 基于历史统计规律，不具备预测能力。
+ 基于历史统计规律和 ML 模型，预测结果仅供参考。
 ==================================================
 对话式量化 Agent — 支持自然语言交互。
 
 支持中文自然语言查询，包括：
 - 股票分析、市场诊断、策略推荐
-- 概念解释、策略对比、风险提示
-- 参数优化、数据查询、帮助指令
+- AI 涨跌预测、概念解释、策略对比
+- 风险提示、参数优化、数据查询、帮助指令
 
 使用方法:
     chat = ChatAgent()
@@ -120,6 +120,8 @@ class ChatAgent:
 
         # 意图匹配（优先级从高到低）
         intents = [
+            (["预测", "未来走势", "明天", "下周", "涨跌", "涨还是跌",
+              "会涨吗", "会跌吗", "后市", "看涨", "看跌"], "predict"),
             (["分析", "看看", "查", "看一下", "帮我分析", "走势", "怎么看", "怎么样$",
               "帮我看看", "分析一下", "表现如何"], "analyze"),
             (["市场", "行情", "状态", "大势", "盘面", "环境", "趋势判断"], "market"),
@@ -195,6 +197,71 @@ class ChatAgent:
             "",
             "> ⚠️ 以上为 Agent 基于历史数据的分析，不构成交易建议。",
         ]
+        return "\n".join(lines)
+
+    def _handle_predict(self, params: dict, text: str) -> str:
+        """处理预测请求 — 运行 ML 模型并返回预测结果。"""
+        if self.data is None:
+            return "请先加载数据，我才能做预测。可以输入股票代码开始。比如：「分析一下000001」"
+
+        try:
+            from prediction import PredictionEngine
+        except ImportError:
+            return "预测模块未安装，请先安装 scikit-learn：`pip install scikit-learn`"
+
+        try:
+            engine = PredictionEngine()
+            result = engine.predict(self.data)
+        except Exception as e:
+            return f"预测模块运行出错：{e}\n\n请确保数据量充足（至少 50 个交易日）。"
+
+        # 构建预测报告
+        acc = result.evaluation_metrics.get("accuracy", 0)
+        acc_str = f"{acc:.1%}" if acc else "N/A"
+
+        prob_pct = result.direction_probability * 100
+        direction_emoji = "📈" if result.direction == 1 else "📉"
+        current = result.current_price
+        target = result.predicted_price_1d
+        change = result.predicted_return_1d
+        current_str = f"{current:.2f}" if current else "N/A"
+        target_str = f"{target:.2f}" if target else "N/A"
+        change_str = f"{change:+.2%}" if change is not None else "N/A"
+
+        lines = [
+            f"## 🔮 AI 价格预测（{self.symbol_name}）",
+            "",
+            f"**{direction_emoji} 预测方向**: {result.direction_label} | **概率**: {prob_pct:.1f}%",
+            f"**当前价格**: {current_str} 元 | **预测目标价**: {target_str} 元 ({change_str})",
+            f"**置信度**: {result.confidence:.2f} | **模型**: {result.model_name}",
+            f"**近期准确率**: {acc_str}",
+            "",
+        ]
+
+        if result.predicted_price_5d:
+            lines.append(f"📅 5日参考目标价: **{result.predicted_price_5d:.2f}** 元 ({result.predicted_return_5d:+.2%})")
+            lines.append("")
+
+        # 特征重要性
+        if result.feature_importance:
+            lines.append("### 📊 关键影响因素")
+            lines.append("| 特征 | 重要性 |")
+            lines.append("|------|--------|")
+            for feat, imp in list(result.feature_importance.items())[:8]:
+                bar = "█" * min(int(imp * 30), 15)
+                lines.append(f"| {feat} | {bar} {imp:.3f} |")
+            lines.append("")
+
+        # 操作提示
+        lines.extend([
+            "### 💡 操作提示",
+            f"- 上涨概率 > 70% 时信号可靠性相对较高（当前: {prob_pct:.1f}%）",
+            "- 预测置信度越高，方向判断越明确",
+            "- 建议结合市场诊断和策略推荐综合判断",
+            "",
+            f"> ⚠️ {result.warning}",
+        ])
+
         return "\n".join(lines)
 
     def _handle_market(self, params: dict, text: str) -> str:

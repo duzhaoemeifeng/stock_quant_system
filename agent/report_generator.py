@@ -30,6 +30,7 @@ class ReportGenerator:
         strategy_reco: dict,
         backtest_result: dict | None = None,
         opt_result: dict | None = None,
+        prediction: dict | None = None,
     ) -> str:
         """生成完整分析报告（Markdown格式）。"""
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -49,6 +50,13 @@ class ReportGenerator:
             "",
             cls._regime_details(market_regime),
             "",
+        ]
+
+        # AI 预测章节
+        if prediction:
+            lines.extend(cls._prediction_section(prediction))
+
+        lines.extend([
             "---",
             "",
             "## 🎯 策略推荐",
@@ -60,7 +68,7 @@ class ReportGenerator:
             f"- **止损设置**: {strategy_reco.get('stop_loss', 0):.0%}",
             f"- **建议仓位**: {strategy_reco.get('recommended_position', 0):.0%}",
             "",
-        ]
+        ])
 
         # 推荐参数
         params = strategy_reco.get("params", {})
@@ -167,3 +175,51 @@ class ReportGenerator:
             return "⭐⭐"
         else:
             return "⭐"
+
+    @staticmethod
+    def _prediction_section(pred: dict) -> list[str]:
+        """生成 AI 预测章节。"""
+        prob_pct = pred.get("probability", 0.5) * 100
+        direction = pred.get("direction_label", "N/A")
+        direction_emoji = "📈" if pred.get("direction") == 1 else "📉"
+        acc = pred.get("accuracy", 0)
+        acc_str = f"{acc:.1%}" if acc else "N/A"
+
+        current = pred.get("current_price")
+        target_1d = pred.get("predicted_price_1d")
+        change_1d = pred.get("predicted_return_1d")
+        target_5d = pred.get("predicted_price_5d")
+        change_5d = pred.get("predicted_return_5d")
+
+        current_str = f"{current:.2f}" if current else "N/A"
+        target_str = f"{target_1d:.2f}" if target_1d else "N/A"
+        change_str = f"{change_1d:+.2%}" if change_1d is not None else "N/A"
+
+        lines = [
+            "---",
+            "",
+            "## 🔮 AI 价格预测",
+            "",
+            f"**{direction_emoji} 预测方向**: {direction} | **概率**: {prob_pct:.1f}%",
+            f"**当前价格**: {current_str} 元 | **预测目标价**: {target_str} 元 ({change_str})",
+            f"**模型**: {pred.get('model_name', 'N/A')} | **近期准确率**: {acc_str}",
+            f"**置信度**: {pred.get('confidence', 0):.2f}",
+            "",
+        ]
+
+        if target_5d:
+            change_5d_str = f"{change_5d:+.2%}" if change_5d is not None else ""
+            lines.append(f"📅 5日参考: **{target_5d:.2f}** 元 ({change_5d_str})")
+            lines.append("")
+
+        if pred.get("feature_importance"):
+            lines.append("### 关键影响因素")
+            lines.append("| 特征 | 重要性 |")
+            lines.append("|------|--------|")
+            for feat, imp in list(pred["feature_importance"].items())[:8]:
+                lines.append(f"| {feat} | {imp:.3f} |")
+            lines.append("")
+
+        lines.append(f"> ⚠️ {pred.get('warning', '预测结果基于历史统计规律，不构成投资建议')}")
+        lines.append("")
+        return lines
